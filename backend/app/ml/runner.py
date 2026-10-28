@@ -14,6 +14,7 @@ import sklearn
 from sqlalchemy.orm import Session as DbSession
 
 from ..analytics.features import FEATURE_DEFINITIONS, FEATURE_VERSION, build_features
+from ..config import storage_root
 from ..db import SessionLocal
 from ..marketdata.base import ProviderError
 from ..marketdata.service import get_history
@@ -29,8 +30,8 @@ from .validation import (
 )
 
 logger = logging.getLogger("stockpulse.ml")
-BASE_DIR = Path(__file__).resolve().parents[2]
-ARTIFACT_DIR = BASE_DIR / "storage" / "models"
+STORAGE_ROOT = storage_root()
+ARTIFACT_DIR = STORAGE_ROOT / "storage" / "models"
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 _semaphore = threading.Semaphore(2)
 
@@ -343,7 +344,7 @@ def execute_experiment(db: DbSession, exp: Experiment) -> None:
         },
         artifact_path,
     )
-    version.artifact_path = str(artifact_path.relative_to(BASE_DIR))
+    version.artifact_path = str(artifact_path.relative_to(STORAGE_ROOT))
     exp.artifact_path = version.artifact_path
     exp.status = "succeeded"
     exp.finished_at = datetime.now(timezone.utc)
@@ -403,7 +404,7 @@ def make_prediction(db: DbSession, exp: Experiment, symbol: str | None = None) -
     )
     if not version:
         raise ValueError("No model version stored for this experiment")
-    path = BASE_DIR / version.artifact_path
+    path = STORAGE_ROOT / version.artifact_path
     if not path.exists():
         raise ValueError("Model artifact is missing; rerun the experiment")
     artifact = joblib.load(path)

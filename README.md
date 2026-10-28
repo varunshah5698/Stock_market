@@ -178,6 +178,32 @@ the built SPA on port 8000. Put a TLS-terminating reverse proxy in front, set `A
 **Docker was not available in this build environment**, so the image/Compose stack is provided but was not
 executed here. The equivalent local build, migration and runtime paths were executed.
 
+### Vercel (services)
+
+`vercel.json` deploys this repository as a single project with two services: `backend` (FastAPI, entrypoint
+`app/main.py`) and `frontend` (Vite). Public routing sends `/api/*`, `/health` and `/ready` to the backend and
+everything else to the SPA, so the browser calls `/api/...` on the same origin and the frontend needs no API
+base URL configured. The frontend service carries its own `/(.*)` → `/index.html` rewrite so client-side routes
+such as `/app/reliability` work on a direct visit; `/api/*` and the health paths never reach it because they are
+matched by the top-level rewrites first.
+
+Serverless Functions have no persistent local disk and no long-lived process, so the SQLite default and the
+in-process scheduler cannot be used. Set these project environment variables before deploying:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+psycopg://...` (e.g. Neon, Supabase) | SQLite cannot be written at runtime |
+| `SECRET_KEY` | `python -c "import secrets;print(secrets.token_urlsafe(48))"` | enforced when `APP_ENV=production` |
+| `COOKIE_SECURE` | `true` | enforced when `APP_ENV=production` |
+| `AUTO_CREATE_SCHEMA` | `false` | run `alembic upgrade head` against the database once instead |
+| `BACKGROUND_JOBS` | `false` | the alert/limit-order scheduler needs a long-running process; use Cron Jobs |
+| `APP_URL`, `ALLOWED_ORIGINS` | the deployment origin | CORS and CSP |
+
+Uploaded datasets and trained model artifacts are written under `STORAGE_DIR`, which defaults to `/tmp` when the
+bundle is read-only. That is per-instance and ephemeral: uploads and artifacts disappear on cold start or
+redeploy. Point `STORAGE_DIR` at a mounted volume, or move artifacts to object storage, before relying on them.
+Validate the multi-service routing locally with `npx vercel dev -L`.
+
 ### Without Docker
 
 1. Build the SPA: `cd frontend && npm ci && npm run build`.

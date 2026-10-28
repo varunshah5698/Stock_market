@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DbSession
 
-from ..config import settings
+from ..config import settings, storage_root
 from ..db import get_db
 from ..deps import audit, current_user
 from ..models import Dataset, User, uid
@@ -21,8 +21,8 @@ from ..ratelimit import client_ip, upload_limiter
 from ..ml.validation import to_builtin
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
-BASE_DIR = Path(__file__).resolve().parents[2]
-DATASET_DIR = BASE_DIR / "storage" / "datasets"
+STORAGE_ROOT = storage_root()
+DATASET_DIR = STORAGE_ROOT / "storage" / "datasets"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_ROWS = 200_000
@@ -290,7 +290,7 @@ async def upload_dataset(
         user_id=user.id,
         name=(name.strip() or Path(SAFE_FILENAME.sub("_", filename)).stem)[:120],
         original_filename=SAFE_FILENAME.sub("_", filename)[:255],
-        storage_path=str(path.relative_to(BASE_DIR)),
+        storage_path=str(path.relative_to(STORAGE_ROOT)),
         rows=len(cleaned),
         columns=list(cleaned.columns),
         schema_json=schema,
@@ -340,7 +340,7 @@ def _owned(db: DbSession, user: User, dataset_id: str) -> Dataset:
 
 
 def _read_dataset(d: Dataset) -> pd.DataFrame:
-    path = (BASE_DIR / d.storage_path).resolve()
+    path = (STORAGE_ROOT / d.storage_path).resolve()
     root = DATASET_DIR.resolve()
     if not str(path).startswith(str(root) + "/") or not path.exists():
         raise HTTPException(status_code=410, detail="Dataset file is no longer available")
@@ -450,7 +450,7 @@ def export_dataset(dataset_id: str, user: User = Depends(current_user), db: DbSe
 @router.delete("/{dataset_id}")
 def delete_dataset(dataset_id: str, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
     dataset = _owned(db, user, dataset_id)
-    path = (BASE_DIR / dataset.storage_path).resolve()
+    path = (STORAGE_ROOT / dataset.storage_path).resolve()
     root = DATASET_DIR.resolve()
     if str(path).startswith(str(root) + "/") and path.exists():
         path.unlink()

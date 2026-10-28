@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session as DbSession
 
-from ..config import settings
+from ..config import settings, storage_root
 from ..db import get_db
 from ..deps import audit, current_user
 from ..marketdata.service import bar_count, cached_frame, get_provider, provider_info
@@ -37,7 +36,7 @@ from ..schemas import PreferencesIn
 from ..security import SESSION_COOKIE, token_hash, verify_password
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
-BASE_DIR = Path(__file__).resolve().parents[2]
+STORAGE_ROOT = storage_root()
 
 
 @router.get("/system/status")
@@ -355,13 +354,13 @@ def delete_account(payload: dict, response: Response, user: User = Depends(curre
             detail="Wait for or cancel active training/backtest jobs before deleting the account. In-flight jobs cannot be safely interrupted.",
         )
     for dataset in db.query(Dataset).filter(Dataset.user_id == user.id).all():
-        path = (BASE_DIR / dataset.storage_path).resolve()
-        if str(path).startswith(str((BASE_DIR / "storage" / "datasets").resolve()) + "/") and path.exists():
+        path = (STORAGE_ROOT / dataset.storage_path).resolve()
+        if str(path).startswith(str((STORAGE_ROOT / "storage" / "datasets").resolve()) + "/") and path.exists():
             path.unlink()
     for exp in db.query(Experiment).filter(Experiment.user_id == user.id).all():
         if exp.artifact_path:
-            path = (BASE_DIR / exp.artifact_path).resolve()
-            if str(path).startswith(str((BASE_DIR / "storage" / "models").resolve()) + "/") and path.exists():
+            path = (STORAGE_ROOT / exp.artifact_path).resolve()
+            if str(path).startswith(str((STORAGE_ROOT / "storage" / "models").resolve()) + "/") and path.exists():
                 path.unlink()
     audit(db, user.id, "account.delete", target=user.id)
     db.delete(user)

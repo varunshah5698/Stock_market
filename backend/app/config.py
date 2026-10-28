@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import secrets
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -65,3 +67,38 @@ settings = get_settings()
 # tokens do not depend on it, but production explicitly requires a real value.
 if settings.secret_key == "change-me-development-only":
     settings.secret_key = settings.secret_key + "-" + secrets.token_hex(16)
+
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+
+
+def _writable(directory: Path) -> bool:
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".write-probe"
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def storage_root() -> Path:
+    """Anchor for runtime-written files (uploaded datasets, model artifacts).
+
+    Database rows store paths relative to this anchor, keeping the ``storage/...``
+    prefix, so records stay valid when the anchor moves. Locally the anchor is the
+    ``backend/`` directory. Serverless platforms mount the bundle read-only, so on
+    Vercel the anchor falls back to ``/tmp``; set ``STORAGE_DIR`` to override.
+
+    ponytail: ``/tmp`` is per-instance and ephemeral, so uploaded datasets and
+    trained model artifacts disappear on cold start or redeploy. Upgrade path: set
+    ``STORAGE_DIR`` to a mounted volume, or move artifacts to object storage,
+    before relying on them.
+    """
+    override = os.environ.get("STORAGE_DIR")
+    candidates = [Path(override)] if override else [BASE_DIR, Path("/tmp/stockpulse-storage")]
+    for candidate in candidates:
+        if _writable(candidate):
+            return candidate
+    return Path("/tmp/stockpulse-storage")
