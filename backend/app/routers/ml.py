@@ -101,7 +101,15 @@ def create_experiment(payload: ExperimentIn, user: User = Depends(current_user),
     audit(db, user.id, "experiment.create", target=f"{payload.symbol}:{payload.target}:{payload.horizon}")
     db.commit()
     launch_experiment(exp.id)
-    return {"experiment": _experiment_summary(exp), "message": "Experiment queued. Training runs in a background worker thread."}
+    db.refresh(exp)
+    return {
+        "experiment": _experiment_summary(exp),
+        "message": (
+            "Experiment finished inline. Serverless functions cannot keep a background worker."
+            if settings.inline_jobs
+            else "Experiment queued. Training runs in a background worker thread."
+        ),
+    }
 
 
 @router.get("/experiments")

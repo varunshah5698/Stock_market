@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -255,6 +256,10 @@ class Dataset(Base):
     name: Mapped[str] = mapped_column(String(120))
     original_filename: Mapped[str] = mapped_column(String(255))
     storage_path: Mapped[str] = mapped_column(String(500))
+    # Authoritative copy of the validated CSV. Serverless filesystems are
+    # read-only/ephemeral, so the row carries the bytes and the file on disk is
+    # only a local convenience.
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     rows: Mapped[int] = mapped_column(Integer, default=0)
     columns: Mapped[list] = mapped_column(JSON, default=list)
     schema_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -300,6 +305,8 @@ class ModelVersion(Base):
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     artifact_path: Mapped[str] = mapped_column(String(500), default="")
+    # Authoritative joblib bytes, for the same reason as Dataset.content.
+    artifact: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

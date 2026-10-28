@@ -25,28 +25,14 @@ _stop = threading.Event()
 
 
 def _scheduler_loop() -> None:
-    from .alerts_engine import evaluate_all_active
-    from .models import PaperAccount, PaperOrder
-    from .paper.engine import process_open_orders
+    from .alerts_engine import run_scheduler_cycle
 
     while not _stop.wait(120):
         db = SessionLocal()
         try:
-            fired = evaluate_all_active(db, limit=100)
-            if fired:
-                logger.info("alert_scheduler fired=%s", fired)
-            account_ids = {
-                row[0]
-                for row in db.query(PaperOrder.account_id)
-                .filter(PaperOrder.status == "OPEN")
-                .distinct()
-                .limit(100)
-                .all()
-            }
-            for account_id in account_ids:
-                account = db.get(PaperAccount, account_id)
-                if account:
-                    process_open_orders(db, account)
+            result = run_scheduler_cycle(db, limit=100)
+            if result["alerts_fired"]:
+                logger.info("alert_scheduler fired=%s", result["alerts_fired"])
         except Exception as exc:  # keep the scheduler alive
             logger.warning("scheduler_cycle_failed error=%s", exc)
             db.rollback()
@@ -110,12 +96,24 @@ app.add_middleware(
 )
 
 
+def _browser_origin(request: Request) -> str:
+    """Origin the browser actually used.
+
+    Behind a reverse proxy (Vercel services, Docker + nginx) ``request.url``
+    describes the internal hop, so an exact match against it rejects legitimate
+    same-origin mutations on every deployment and preview URL. Prefer the
+    forwarded host/proto headers, which carry the public origin.
+    """
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+    return f"{proto}://{host}"
+
+
 @app.middleware("http")
 async def security_and_csrf(request: Request, call_next):
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("origin")
-        same_origin = f"{request.url.scheme}://{request.url.netloc}"
-        if origin and origin not in origins and origin != same_origin:
+        if origin and origin not in origins and origin != _browser_origin(request):
             return JSONResponse(status_code=403, content={"detail": "Cross-origin request rejected"})
         length = request.headers.get("content-length")
         if length and length.isdigit() and int(length) > 25 * 1024 * 1024:

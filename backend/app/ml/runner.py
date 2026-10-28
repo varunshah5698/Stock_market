@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import threading
 import time
@@ -14,7 +15,7 @@ import sklearn
 from sqlalchemy.orm import Session as DbSession
 
 from ..analytics.features import FEATURE_DEFINITIONS, FEATURE_VERSION, build_features
-from ..config import storage_root
+from ..config import settings, storage_root
 from ..db import SessionLocal
 from ..marketdata.base import ProviderError
 from ..marketdata.service import get_history
@@ -327,6 +328,7 @@ def execute_experiment(db: DbSession, exp: Experiment) -> None:
     db.flush()
 
     artifact_path = ARTIFACT_DIR / f"{exp.id}.joblib"
+    buffer = io.BytesIO()
     joblib.dump(
         {
             "pipeline": final_pipeline,
@@ -342,9 +344,15 @@ def execute_experiment(db: DbSession, exp: Experiment) -> None:
             "model_key": selected_spec.key,
             "model_version_id": version.id,
         },
-        artifact_path,
+        buffer,
     )
-    version.artifact_path = str(artifact_path.relative_to(STORAGE_ROOT))
+    version.artifact = buffer.getvalue()
+    try:
+        artifact_path.write_bytes(version.artifact)
+        version.artifact_path = str(artifact_path.relative_to(STORAGE_ROOT))
+    except OSError:
+        # Serverless: no writable disk. The stored bytes above are authoritative.
+        version.artifact_path = ""
     exp.artifact_path = version.artifact_path
     exp.status = "succeeded"
     exp.finished_at = datetime.now(timezone.utc)
@@ -389,6 +397,11 @@ def run_experiment_job(experiment_id: str) -> None:
 
 
 def launch_experiment(experiment_id: str) -> None:
+    if settings.inline_jobs:
+        # Serverless: run in-request, because a daemon thread dies with the
+        # instance. Measured ~3s for two models over five years of daily bars.
+        run_experiment_job(experiment_id)
+        return
     thread = threading.Thread(target=run_experiment_job, args=(experiment_id,), daemon=True, name=f"exp-{experiment_id[:8]}")
     thread.start()
 
@@ -404,10 +417,13 @@ def make_prediction(db: DbSession, exp: Experiment, symbol: str | None = None) -
     )
     if not version:
         raise ValueError("No model version stored for this experiment")
-    path = STORAGE_ROOT / version.artifact_path
-    if not path.exists():
-        raise ValueError("Model artifact is missing; rerun the experiment")
-    artifact = joblib.load(path)
+    if version.artifact:
+        artifact = joblib.load(io.BytesIO(version.artifact))
+    else:
+        path = STORAGE_ROOT / version.artifact_path
+        if not path.exists():
+            raise ValueError("Model artifact is missing; rerun the experiment")
+        artifact = joblib.load(path)
     if artifact.get("feature_version") != FEATURE_VERSION or artifact.get("features") != version.features:
         raise ValueError("Model artifact is incompatible with the current feature version; retrain the experiment")
     config = exp.config or {}

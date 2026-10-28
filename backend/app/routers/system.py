@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -600,3 +601,23 @@ def ready(db: DbSession = Depends(get_db)):
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable")
     return {"status": "ready", "provider": get_provider().name}
+
+
+@router.get("/system/cron")
+def cron_tick(request: Request, db: DbSession = Depends(get_db)) -> dict:
+    """Scheduler tick for serverless deployments with no long-lived process.
+
+    Vercel Cron requests this path and attaches ``Authorization: Bearer
+    $CRON_SECRET`` whenever that variable is configured, so the endpoint is not
+    open to the internet. It evaluates alerts, fills resting paper orders and
+    runs any experiments/backtests still marked queued (bounded by a deadline).
+    """
+    secret = os.environ.get("CRON_SECRET", "").strip()
+    if secret and request.headers.get("authorization", "") != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from ..alerts_engine import drain_queued_jobs, run_scheduler_cycle
+
+    result = run_scheduler_cycle(db)
+    result.update(drain_queued_jobs())
+    return {"ok": True, **result}

@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DbSession
 
 from ..backtest.engine import evaluate_rules, launch_backtest_job
+from ..config import settings
 from ..db import get_db
 from ..deps import audit, current_user
 from ..marketdata.base import ProviderError
@@ -283,7 +284,11 @@ def create_backtest(payload: BacktestIn, user: User = Depends(current_user), db:
     audit(db, user.id, "backtest.create", target=f"{payload.symbol}:{strategy.id}")
     db.commit()
     launch_backtest_job(bt.id)
-    return {"backtest": {"id": bt.id, "status": bt.status, "symbol": bt.symbol}, "message": "Backtest queued."}
+    db.refresh(bt)
+    return {
+        "backtest": {"id": bt.id, "status": bt.status, "symbol": bt.symbol},
+        "message": "Backtest finished inline." if settings.inline_jobs else "Backtest queued.",
+    }
 
 
 @router.get("/backtests")

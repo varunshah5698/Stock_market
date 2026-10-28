@@ -118,3 +118,68 @@ def evaluate_all_active(db: DbSession, limit: int = 100) -> int:
             logger.warning("Alert evaluation failed for user %s: %s", user_id, exc)
             db.rollback()
     return total
+
+
+def run_scheduler_cycle(db: DbSession, limit: int = 100) -> dict:
+    """One scheduler tick: evaluate alerts and fill resting paper orders.
+
+    Called by the in-process thread in development and by the cron endpoint on
+    serverless, so the behaviour cannot drift between the two.
+    """
+    from .models import PaperAccount, PaperOrder
+    from .paper.engine import process_open_orders
+
+    fired = evaluate_all_active(db, limit=limit)
+    account_ids = {
+        row[0]
+        for row in db.query(PaperOrder.account_id).filter(PaperOrder.status == "OPEN").distinct().limit(limit).all()
+    }
+    processed = 0
+    for account_id in account_ids:
+        account = db.get(PaperAccount, account_id)
+        if account:
+            try:
+                process_open_orders(db, account)
+                processed += 1
+            except Exception as exc:
+                logger.warning("Paper order processing failed for account %s: %s", account_id, exc)
+                db.rollback()
+    return {"alerts_fired": fired, "accounts_processed": processed}
+
+
+def drain_queued_jobs(budget_seconds: float = 40.0, max_jobs: int = 20) -> dict:
+    """Run queued experiments/backtests until the budget is spent.
+
+    A serverless request cannot hold a queue, so jobs that were only enqueued
+    (for example the rest of a large sweep) are picked up here. The loop is
+    bounded by both a deadline and a job count so it always returns in time.
+    """
+    import time
+
+    from .backtest.engine import launch_backtest_job
+    from .db import SessionLocal
+    from .ml.runner import launch_experiment
+    from .models import Backtest, Experiment
+
+    started = {"experiments": 0, "backtests": 0}
+    deadline = time.monotonic() + budget_seconds
+    db = SessionLocal()
+    try:
+        for _ in range(max_jobs):
+            if time.monotonic() >= deadline:
+                break
+            db.expire_all()  # the job writes through its own session
+            exp = db.query(Experiment).filter(Experiment.status == "queued").order_by(Experiment.created_at).first()
+            if exp is not None:
+                launch_experiment(exp.id)
+                started["experiments"] += 1
+                continue
+            bt = db.query(Backtest).filter(Backtest.status == "queued").order_by(Backtest.created_at).first()
+            if bt is not None:
+                launch_backtest_job(bt.id)
+                started["backtests"] += 1
+                continue
+            break
+    finally:
+        db.close()
+    return started

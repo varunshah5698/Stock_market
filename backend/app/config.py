@@ -5,6 +5,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +27,10 @@ class Settings(BaseSettings):
     max_upload_mb: int = 8
     background_jobs: bool = True
     auto_create_schema: bool = True
+    # Serverless platforms tear down the instance once a response is sent, which
+    # kills daemon worker threads mid-job. Inline mode runs the job inside the
+    # request instead; Vercel sets VERCEL=1, so it defaults on there.
+    inline_jobs: bool = Field(default_factory=lambda: bool(os.environ.get("VERCEL")))
 
     news_api_key: str = ""
     broker_adapter: str = ""

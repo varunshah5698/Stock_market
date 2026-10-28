@@ -196,15 +196,29 @@ in-process scheduler cannot be used. Set these project environment variables bef
 | `SECRET_KEY` | `python -c "import secrets;print(secrets.token_urlsafe(48))"` | enforced when `APP_ENV=production` |
 | `COOKIE_SECURE` | `true` | enforced when `APP_ENV=production` |
 | `AUTO_CREATE_SCHEMA` | `false` | run `alembic upgrade head` against the database once instead |
-| `BACKGROUND_JOBS` | `false` | the alert/limit-order scheduler needs a long-running process; use Cron Jobs |
+| `BACKGROUND_JOBS` | `false` | there is no long-lived process; the cron endpoint runs the same cycle |
+| `CRON_SECRET` | any random string | Vercel Cron sends it as a bearer token; without it `/api/v1/system/cron` is open |
 | `APP_URL`, `ALLOWED_ORIGINS` | the deployment origin, e.g. `https://<project>.vercel.app` | the CSRF origin check returns 403 on every mutation when the request origin matches neither, and CSP/CORS read the same list |
 
-Uploaded datasets and trained model artifacts are written under `STORAGE_DIR`, which defaults to `/tmp` when the
-bundle is read-only. That is per-instance and ephemeral: uploads and artifacts disappear on cold start or
-redeploy. Point `STORAGE_DIR` at a mounted volume, or move artifacts to object storage, before relying on them. Validate the
-multi-service routing locally with `npx vercel dev -L`; it was run for this change and detected both services,
-routed `/api/*`, `/health` and `/ready` to the backend, served client-side deep links from the SPA, and completed a
-register → session cookie → `/auth/me` round-trip on the single public port.
+Serverless has no background worker and no writable disk, so the application adapts in three ways:
+
+- **Jobs run in-request.** `INLINE_JOBS` defaults to on when `VERCEL=1` is present, so experiments and backtests
+  execute inside the request instead of a daemon thread that dies with the instance. A two-model experiment over
+  five years of daily bars was measured at ~3s, well inside the limit. Anything still queued (for example the
+  remainder of a large sweep) is picked up by the cron endpoint, bounded by a deadline.
+- **Bytes live in the database.** Uploaded CSVs and trained artifacts are stored on the row (`datasets.content`,
+  `model_versions.artifact`). `STORAGE_DIR` remains a local convenience copy only; when the bundle is read-only
+  the write is skipped and reads come from the database, so uploads survive cold starts.
+- **The scheduler is a cron.** `vercel.json` calls `/api/v1/system/cron` daily (the Hobby plan allows one run per
+  day); it evaluates alerts, fills resting paper orders and drains queued jobs. Move to a Pro plan, or point any
+  external scheduler at the same path with the bearer token, for a tighter cadence.
+
+CSRF checks compare against `x-forwarded-host`, not the internal request URL, so preview deployments and custom
+domains are accepted without listing each one.
+
+Validate the multi-service routing locally with `npx vercel dev -L`; it was run for this change and detected both
+services, routed `/api/*`, `/health` and `/ready` to the backend, served client-side deep links from the SPA, and
+completed a register → session cookie → `/auth/me` round-trip on the single public port.
 
 `DATABASE_URL` may be a provider's standard `postgresql://` URL (Neon, Supabase, Render hand these out); the app
 rewrites it to the installed `psycopg` 3 driver, so no `+psycopg` suffix and no second Postgres driver is needed.

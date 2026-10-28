@@ -413,4 +413,11 @@ def launch_backtest_job(backtest_id: str) -> None:
         finally:
             db.close()
 
+    from ..config import settings
+
+    if settings.inline_jobs:
+        # Serverless kills daemon threads after the response; run in-request.
+        job()
+        return
+
     threading.Thread(target=job, daemon=True, name=f"bt-{backtest_id[:8]}").start()

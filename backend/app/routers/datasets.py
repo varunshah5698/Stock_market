@@ -271,8 +271,15 @@ async def upload_dataset(
         {"drop_duplicates": True, "drop_ohlc_violations": drop_ohlc_violations},
     )
     dataset_id = uid()
-    path = DATASET_DIR / f"{dataset_id}.csv"
-    cleaned.to_csv(path, index=False)
+    payload = cleaned.to_csv(index=False).encode("utf-8")
+    storage_path = ""
+    try:
+        path = DATASET_DIR / f"{dataset_id}.csv"
+        path.write_bytes(payload)
+        storage_path = str(path.relative_to(STORAGE_ROOT))
+    except OSError:
+        # Serverless: no writable disk. The database copy below is authoritative.
+        pass
     schema = {
         "columns": list(cleaned.columns),
         "mapping": mapping_obj,
@@ -290,7 +297,8 @@ async def upload_dataset(
         user_id=user.id,
         name=(name.strip() or Path(SAFE_FILENAME.sub("_", filename)).stem)[:120],
         original_filename=SAFE_FILENAME.sub("_", filename)[:255],
-        storage_path=str(path.relative_to(STORAGE_ROOT)),
+        storage_path=storage_path,
+        content=payload,
         rows=len(cleaned),
         columns=list(cleaned.columns),
         schema_json=schema,
@@ -340,11 +348,14 @@ def _owned(db: DbSession, user: User, dataset_id: str) -> Dataset:
 
 
 def _read_dataset(d: Dataset) -> pd.DataFrame:
-    path = (STORAGE_ROOT / d.storage_path).resolve()
-    root = DATASET_DIR.resolve()
-    if not str(path).startswith(str(root) + "/") or not path.exists():
-        raise HTTPException(status_code=410, detail="Dataset file is no longer available")
-    frame = pd.read_csv(path)
+    if d.content:
+        frame = pd.read_csv(io.BytesIO(d.content))
+    else:
+        path = (STORAGE_ROOT / d.storage_path).resolve()
+        root = DATASET_DIR.resolve()
+        if not str(path).startswith(str(root) + "/") or not path.exists():
+            raise HTTPException(status_code=410, detail="Dataset file is no longer available")
+        frame = pd.read_csv(path)
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce", utc=True)
     return frame
 
