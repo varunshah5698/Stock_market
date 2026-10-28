@@ -10,8 +10,8 @@
  * existing reduced-motion hook disables animation the same way Hero3D does.
  */
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
-import { useMemo, useRef } from 'react'
+import { Line, OrbitControls } from '@react-three/drei'
+import { useMemo, useRef, type ReactNode } from 'react'
 import * as THREE from 'three'
 
 import { useReducedMotion } from '../lib/hooks'
@@ -21,6 +21,45 @@ const UP = '#34e0a1'
 const DOWN = '#ff6b8a'
 const VIOLET = '#8b5cf6'
 const CYAN = '#22d3ee'
+
+/** Even distribution of points on a sphere (golden-angle spiral). */
+function spherePoints(count: number, radius: number): THREE.Vector3[] {
+  const points: THREE.Vector3[] = []
+  const golden = Math.PI * (3 - Math.sqrt(5))
+  const total = Math.max(count, 2)
+  for (let index = 0; index < count; index += 1) {
+    const y = 1 - (index / (total - 1)) * 2
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
+    const theta = golden * index
+    points.push(new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius))
+  }
+  return points
+}
+
+/**
+ * Idle rotation for 3D scenes. It must live *inside* <Canvas>, because
+ * useFrame requires the react-three-fiber context.
+ */
+function Spinning({
+  children,
+  reduced,
+  speed = 0.4,
+  continuous = false,
+}: {
+  children: ReactNode
+  reduced: boolean
+  speed?: number
+  continuous?: boolean
+}) {
+  const group = useRef<THREE.Group>(null)
+  useFrame((state) => {
+    if (!group.current || reduced) return
+    group.current.rotation.y = continuous
+      ? state.clock.elapsedTime * speed
+      : Math.sin(state.clock.elapsedTime * speed) * 0.4
+  })
+  return <group ref={group}>{children}</group>
+}
 
 function ReturnBars({ values, reduced }: { values: number[]; reduced: boolean }) {
   const group = useRef<THREE.Group>(null)
@@ -169,4 +208,132 @@ export function ForecastCone3D({
     </div>
   )
 }
+
+/**
+ * Correlation globe: instruments sit on a sphere, and each edge is a real
+ * pairwise correlation from the API's matrix. Warm edges are positive (the pair
+ * moves together, so risk concentrates) and cool edges are negative.
+ */
+export function CorrelationGlobe3D({
+  symbols,
+  matrix,
+  height = 320,
+}: {
+  symbols: string[]
+  matrix: number[][]
+  height?: number
+}) {
+  const reduced = useReducedMotion()
+  const nodes = useMemo(() => spherePoints(symbols.length, 2.15), [symbols.length])
+  const edges = useMemo(() => {
+    const out: { from: THREE.Vector3; to: THREE.Vector3; corr: number }[] = []
+    for (let row = 0; row < symbols.length; row += 1) {
+      for (let col = row + 1; col < symbols.length; col += 1) {
+        const corr = matrix?.[row]?.[col]
+        if (typeof corr === 'number' && Number.isFinite(corr) && nodes[row] && nodes[col]) {
+          out.push({ from: nodes[row], to: nodes[col], corr })
+        }
+      }
+    }
+    return out
+  }, [matrix, nodes, symbols.length])
+
+  if (symbols.length < 2 || edges.length === 0) return null
+
+  return (
+    <div style={{ height }} className="w-full" aria-label="3D correlation globe">
+      <Canvas dpr={[1, 2]} camera={{ position: [0, 1.4, 7.2], fov: 45 }}>
+        <color attach="background" args={['#0b0b14']} />
+        <ambientLight intensity={0.85} />
+        <directionalLight position={[5, 7, 6]} intensity={1} />
+        <pointLight position={[-5, -2, 3]} intensity={0.5} color={CYAN} />
+        <Spinning reduced={reduced} speed={0.12} continuous>
+          <mesh>
+            <icosahedronGeometry args={[2.15, 1]} />
+            <meshBasicMaterial color="#20203a" wireframe transparent opacity={0.55} />
+          </mesh>
+          {edges.map((edge, index) => {
+            const strength = Math.min(1, Math.abs(edge.corr))
+            return (
+              <Line
+                key={`edge-${index}`}
+                points={[edge.from, edge.to]}
+                color={edge.corr >= 0 ? DOWN : CYAN}
+                lineWidth={0.6 + strength * 1.8}
+                transparent
+                opacity={0.18 + strength * 0.65}
+              />
+            )
+          })}
+          {nodes.map((node, index) => (
+            <mesh key={`node-${symbols[index]}`} position={node}>
+              <sphereGeometry args={[0.14, 18, 18]} />
+              <meshStandardMaterial color={VIOLET} emissive={VIOLET} emissiveIntensity={0.7} />
+            </mesh>
+          ))}
+        </Spinning>
+        <OrbitControls enablePan={false} enableZoom={false} autoRotate={false} />
+      </Canvas>
+    </div>
+  )
+}
+
+/**
+ * Risk terrain: one 3D bar per position, height = its share of portfolio
+ * variance from the API's risk_contribution block. Weight sets the colour so a
+ * large position with small risk contribution is visibly distinct.
+ */
+export function RiskTerrain3D({
+  items,
+  height = 280,
+}: {
+  items: { symbol: string; weight: number; variance_contribution_pct: number }[]
+  height?: number
+}) {
+  const reduced = useReducedMotion()
+  const peaks = items.map((item) => Math.max(0, item.variance_contribution_pct ?? 0))
+  const peak = Math.max(...peaks, 1e-9)
+  const gap = 1.15
+
+  if (items.length === 0) return null
+
+  return (
+    <div style={{ height }} className="w-full" aria-label="3D portfolio risk terrain">
+      <Canvas dpr={[1, 2]} camera={{ position: [0, 4.4, 8.4], fov: 44 }}>
+        <color attach="background" args={['#0b0b14']} />
+        <ambientLight intensity={0.7} />
+        <directionalLight position={[6, 9, 6]} intensity={1.15} />
+        <pointLight position={[-5, -2, 4]} intensity={0.5} color={CYAN} />
+        <Spinning reduced={reduced} speed={0.22}>
+          {items.map((item, index) => {
+            const barHeight = Math.max(0.12, (peaks[index] / peak) * 3.6)
+            const x = (index - (items.length - 1) / 2) * gap
+            const weightRatio = Math.min(1, Math.max(0, item.weight))
+            const color = weightRatio > 0.3 ? DOWN : weightRatio > 0.15 ? VIOLET : CYAN
+            return (
+              <mesh key={`${item.symbol}-${index}`} position={[x, barHeight / 2, 0]}>
+                <boxGeometry args={[0.62, barHeight, 0.62]} />
+                <meshStandardMaterial
+                  color={color}
+                  emissive={color}
+                  emissiveIntensity={0.32}
+                  metalness={0.35}
+                  roughness={0.4}
+                  transparent
+                  opacity={0.95}
+                />
+              </mesh>
+            )
+          })}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
+            <planeGeometry args={[items.length * gap + 1.4, 2.6]} />
+            <meshStandardMaterial color="#12121f" transparent opacity={0.6} />
+          </mesh>
+        </Spinning>
+        <OrbitControls enablePan={false} enableZoom={false} maxPolarAngle={Math.PI / 2.05} minPolarAngle={0.5} />
+      </Canvas>
+    </div>
+  )
+}
+
 

@@ -8,7 +8,7 @@ import {
   Trash2,
   Wallet,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CorrelationHeatmap, Donut, SimpleBars } from '../components/charts'
 import { Badge, Button, Callout, EmptyState, ErrorState, Field, Input, LoadingPanel, Metric, Modal, PageHeader, SectionTitle, WarningList } from '../components/ui'
@@ -17,6 +17,11 @@ import { cn, fmtMoney, fmtNumber, fmtPct, pctClass } from '../lib/format'
 import { useDocumentTitle } from '../lib/hooks'
 import { useToasts } from '../store/ui'
 import type { PortfolioDetail, PortfolioSummary, RiskBlock } from '../lib/types'
+
+// Three.js stays out of the initial bundle.
+const Terrain3D = lazy(() =>
+  import('../components/Market3D').then((module) => ({ default: module.RiskTerrain3D })),
+)
 
 interface ScenarioResult extends RiskBlock {
   scenario_weights: Record<string, number>
@@ -324,6 +329,16 @@ export default function Portfolios() {
                         <div className="mt-3 grid grid-cols-2 gap-2">
                           <Metric label="Max drawdown" value={risk.max_drawdown !== undefined ? fmtPct(risk.max_drawdown * 100) : '—'} />
                           <Metric label="Cumulative" value={risk.cumulative_return !== undefined ? fmtPct(risk.cumulative_return * 100) : '—'} />
+                        </div>
+                        <Suspense
+                          fallback={<div className="mt-3 py-16 text-center font-mono text-[9px] text-dimx">Loading 3D terrain…</div>}
+                        >
+                          <div className="mt-3 overflow-hidden rounded-lg border border-white/[0.06]">
+                            <Terrain3D items={risk.risk_contribution} height={260} />
+                          </div>
+                        </Suspense>
+                        <div className="mt-1 font-mono text-[8px] leading-relaxed text-dimx">
+                          Bar height is the position&apos;s share of portfolio variance; colour reflects its weight. Same numbers as the bars above — drag to orbit.
                         </div>
                         {risk.benchmark && (
                           <div className="mt-3 rounded border border-white/[0.06] bg-black/20 p-2.5 font-mono text-[8.5px] text-dimx">

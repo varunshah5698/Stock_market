@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowUpRight, Download, Info, Layers, Plus, RefreshCw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { CorrelationHeatmap, MarketLineChart, RiskScatter, SimpleBars } from '../components/charts'
 import { DataStatus, EmptyState, ErrorState, LoadingPanel, PageHeader, SectionTitle, WarningList } from '../components/ui'
@@ -8,6 +8,11 @@ import { api } from '../lib/api'
 import { cn, fmtNumber, fmtPct, pctClass } from '../lib/format'
 import { useDocumentTitle } from '../lib/hooks'
 import type { InstrumentSummary } from '../lib/types'
+
+// Three.js stays out of the initial bundle.
+const Globe3D = lazy(() =>
+  import('../components/Market3D').then((module) => ({ default: module.CorrelationGlobe3D })),
+)
 
 interface ComparePayload {
   symbols: string[]
@@ -243,6 +248,20 @@ export default function Compare() {
             <section className="panel p-4">
               <SectionTitle eyebrow="Dependence" title={`Correlation matrix · daily returns`} />
               <CorrelationHeatmap symbols={query.data.correlation.symbols} matrix={query.data.correlation.matrix} />
+            </section>
+            <section className="panel overflow-hidden">
+              <div className="border-b border-white/[0.06] px-4 pb-3 pt-4">
+                <SectionTitle eyebrow="Dependence · 3D" title="Correlation globe" />
+              </div>
+              <Suspense
+                fallback={<div className="px-4 py-14 text-center font-mono text-[10px] text-dimx">Loading 3D globe…</div>}
+              >
+                <Globe3D symbols={query.data.correlation.symbols} matrix={query.data.correlation.matrix} height={320} />
+              </Suspense>
+              <div className="border-t border-white/[0.05] px-4 py-2 font-mono text-[8.5px] leading-relaxed text-dimx">
+                Spheres are instruments; each edge is the pairwise daily-return correlation above. Red = positive (moves together,
+                concentrates risk), cyan = negative. Thickness is |correlation|. Drag to orbit.
+              </div>
             </section>
             <section className="panel p-4">
               <SectionTitle eyebrow="Stability" title={query.data.rolling_correlation ? `${query.data.rolling_correlation.pair.join(' / ')} · 30d` : 'Rolling correlation'} />
