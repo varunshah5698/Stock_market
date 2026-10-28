@@ -279,6 +279,10 @@ Read [docs/STATUS.md](docs/STATUS.md) for the complete, evidenced matrix. Highli
 
 - **Yahoo 429 / provider unavailable**: the API surfaces a 503 or uses fresh-enough cache with a warning.
   Wait, retry, or switch to `MARKET_DATA_PROVIDER=sample` for an explicitly labelled offline demo.
+- **Intraday charts (1m / 3m)**: the provider offers no native three-minute interval, so `3m` candles are
+  aggregated server-side from one-minute bars (`app/marketdata/resample.py`) and the response says so in its
+  warnings. One-minute history is capped at roughly seven days by the provider, so a longer `period` is clamped
+  and disclosed. Intraday bars are delayed, never live, and SMA/Bollinger overlays are drawn for daily candles only.
 - **Login cookie not sticking**: use same-site origins (`localhost:5173` → `localhost:8000`) or set
   `COOKIE_SECURE=true` and serve both over HTTPS. Cross-site deployments need a reviewed cookie/CSRF design.
 - **Alembic cannot import `app`**: run from `backend/`; `prepend_sys_path = .` is configured.

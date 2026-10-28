@@ -57,6 +57,8 @@ export interface InstrumentSummary {
 
 export interface Bar {
   date: string
+  /** UNIX seconds. Present for every bar; required by intraday candles. */
+  time?: number
   open: number
   high: number
   low: number
@@ -72,6 +74,8 @@ export interface IndicatorSeries {
 
 export interface InstrumentHistory {
   symbol: string
+  /** Candle interval the server produced: 1d, 1m, 3m, ... */
+  interval?: string
   instrument: { name: string; exchange: string; currency: string; sector: string; type: string }
   meta: {
     provider: string

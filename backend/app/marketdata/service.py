@@ -18,7 +18,7 @@ _provider: MarketDataProvider | None = None
 _quote_cache: dict[str, tuple[datetime, QuoteResult]] = {}
 _quote_lock = threading.Lock()
 
-_PERIOD_DAYS = {"1y": 365, "2y": 730, "3y": 1095, "5y": 1825, "10y": 3650, "max": 20000}
+_PERIOD_DAYS = {"1d": 1, "5d": 5, "7d": 7, "1mo": 30, "3mo": 92, "6mo": 183, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825, "10y": 3650, "max": 20000}
 
 
 def get_provider() -> MarketDataProvider:

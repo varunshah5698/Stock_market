@@ -33,6 +33,15 @@ const PERIODS = [
   { value: '5y', label: '5Y' },
 ]
 
+// Candle interval. 1m history is capped at ~7 days and 3m is aggregated from
+// 1m by the server, because the provider has no native 3-minute interval.
+const TIMEFRAMES = [
+  { value: '1m', label: '1m', hint: 'One-minute candles. Provider keeps ~7 days; delayed, not live.' },
+  { value: '3m', label: '3m', hint: 'Three-minute candles aggregated server-side from one-minute bars.' },
+  { value: '1d', label: '1D', hint: 'Daily end-of-day candles.' },
+] as const
+type Timeframe = (typeof TIMEFRAMES)[number]['value']
+
 interface Profile {
   symbol: string
   name: string
@@ -61,6 +70,7 @@ export default function Research() {
   const queryClient = useQueryClient()
   const toast = useToasts((state) => state.push)
   const [period, setPeriod] = useState('1y')
+  const [timeframe, setTimeframe] = useState<Timeframe>('1d')
   const [overlays, setOverlays] = useState({ sma20: true, sma50: true, sma200: false, bb: false })
   const [symbolInput, setSymbolInput] = useState(symbol)
   const [alertOpen, setAlertOpen] = useState(false)
@@ -80,8 +90,11 @@ export default function Research() {
   })
 
   const history = useQuery<InstrumentHistory>({
-    queryKey: ['history', symbol, period],
-    queryFn: () => api(`/api/v1/instruments/${encodeURIComponent(symbol)}/history?period=${period}`),
+    // The interval is part of the key, so a previous timeframe's payload can
+    // never be rendered as the newly selected one.
+    queryKey: ['history', symbol, period, timeframe],
+    queryFn: () =>
+      api(`/api/v1/instruments/${encodeURIComponent(symbol)}/history?period=${period}&interval=${timeframe}`),
   })
 
   const indicators = useQuery<IndicatorPayload>({
@@ -164,6 +177,10 @@ export default function Research() {
   const latest = indicators.data?.latest ?? {}
   const bars = history.data?.bars ?? []
   const meta = history.data?.meta
+  // Captured before the JSX: TanStack's result union narrows to `never` inside
+  // the isError branch, so the members are read here instead.
+  const historyError = history.error
+  const refetchHistory = history.refetch
 
   if (history.isLoading && !history.data) {
     return (
@@ -302,6 +319,18 @@ export default function Research() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-md border border-white/[0.08] p-0.5">
+                {TIMEFRAMES.map((item) => (
+                  <button
+                    key={item.value}
+                    onClick={() => setTimeframe(item.value)}
+                    title={item.hint}
+                    className={cn('rounded px-2 py-1 font-mono text-[9px] transition', timeframe === item.value ? 'bg-white/[0.08] text-white' : 'text-dimx hover:text-white')}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex rounded-md border border-white/[0.08] p-0.5">
                 {PERIODS.map((item) => (
                   <button
                     key={item.value}
@@ -337,7 +366,19 @@ export default function Research() {
           </div>
           <div className="p-2">
             {history.isFetching && <div className="px-2 pb-1"><Spinner label="Refreshing bars" /></div>}
-            <PriceChart bars={bars} overlays={overlaysList} height={380} currency={history.data?.meta.currency} />
+            {history.isError ? (
+              <ErrorState
+                title={`Could not load ${timeframe} candles`}
+                message={errorMessage(historyError)}
+                onRetry={() => void refetchHistory()}
+              />
+            ) : bars.length === 0 ? (
+              <div className="px-3 py-12 text-center font-mono text-[10px] text-dimx">
+                {history.isPending ? `Loading ${timeframe} candles…` : `No ${timeframe} candles are available for ${symbol}.`}
+              </div>
+            ) : (
+              <PriceChart bars={bars} overlays={overlaysList} height={380} currency={history.data?.meta.currency} />
+            )}
           </div>
           {headersWarnings(meta?.warnings)}
         </section>

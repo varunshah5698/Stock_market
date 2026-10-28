@@ -22,6 +22,7 @@ import {
 import { CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, createChart, type Time } from 'lightweight-charts'
 import { useEffect, useId, useMemo, useRef } from 'react'
 import { cn, fmtCompact, fmtNumber, fmtPct } from '../lib/format'
+import { isIntraday, toChartRows } from '../lib/chartData'
 import type { Bar as PriceBar, IndicatorSeries } from '../lib/types'
 
 const GRID = 'rgba(255,255,255,0.055)'
@@ -472,6 +473,11 @@ export function MonthlyReturnGrid({ data }: { data: { month: string; return_pct:
 
 /* ---------------------------------------------------------------- price chart */
 
+/**
+ * Intraday bars carry UNIX seconds; daily bars use the business-day string the
+ * API returns, which the chart library accepts directly. Passing a date-only
+ * string for intraday data collapses a whole session into one candle.
+ */
 export function PriceChart({
   bars,
   height = 380,
@@ -531,9 +537,12 @@ export function PriceChart({
       wickDownColor: 'rgba(255,107,138,0.65)',
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     })
+    // The library requires ascending, unique times; helpers live in lib/chartData.
+    const rows = toChartRows(bars)
+    const intraday = isIntraday(bars)
     candles.setData(
-      bars.map((bar) => ({
-        time: bar.date as Time,
+      rows.map(({ bar, time }) => ({
+        time: time as Time,
         open: bar.open,
         high: bar.high,
         low: bar.low,
@@ -548,15 +557,18 @@ export function PriceChart({
       })
       volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
       volume.setData(
-        bars.map((bar) => ({
-          time: bar.date as Time,
+        rows.map(({ bar, time }) => ({
+          time: time as Time,
           value: bar.volume,
           color: bar.close >= bar.open ? 'rgba(52,224,161,0.28)' : 'rgba(255,107,138,0.25)',
         })),
       )
     }
 
-    for (const overlay of overlays) {
+    // Indicator overlays are computed on daily closes, so they only align with
+    // daily bars; on an intraday timeframe they would repeat one timestamp per
+    // session and are therefore not drawn.
+    for (const overlay of intraday ? [] : overlays) {
       const lookup = new Map<string, number>()
       overlay.series.dates.forEach((date, index) => {
         const value = overlay.series.values[index]

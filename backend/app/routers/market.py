@@ -276,28 +276,37 @@ def search(q: str = Query("", max_length=80), limit: int = Query(10, ge=1, le=25
     return {"results": results[:limit], "query": q}
 
 
+def _epoch_seconds(index_value) -> int:
+    """Charting timestamps are UNIX seconds; treat naive indexes as UTC."""
+    ts = pd.Timestamp(index_value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return int(ts.timestamp())
+
+
 @router.get("/api/v1/instruments/{symbol}/history")
 def history(
     symbol: str,
-    period: str = Query("1y", pattern=r"^(1mo|3mo|6mo|1y|2y|3y|5y|10y|max)$"),
-    interval: str = Query("1d", pattern=r"^(1d)$"),
+    period: str = Query("1y", pattern=r"^(1d|5d|7d|1mo|3mo|6mo|1y|2y|3y|5y|10y|max)$"),
+    interval: str = Query("1d", pattern=r"^(1m|3m|2m|5m|15m|30m|60m|90m|1h|1d)$"),
     user: User = Depends(current_user),
     db: DbSession = Depends(get_db),
 ):
     try:
-        result = get_history(db, symbol, period=period if period != "1mo" else "1y", interval=interval)
+        # Daily 1mo is fetched as 1y and trimmed below; intraday must be handed
+        # to the provider as requested so its own lookback cap applies.
+        fetch_period = "1y" if (period == "1mo" and interval == "1d") else period
+        result = get_history(db, symbol, period=fetch_period, interval=interval)
     except ProviderError as exc:
         raise HTTPException(status_code=503, detail=exc.message)
     frame = result.frame
-    if period == "1mo":
-        frame = frame.tail(22)
-    elif period == "3mo":
-        frame = frame.tail(64)
-    elif period == "6mo":
-        frame = frame.tail(126)
+    daily_tail = {"1mo": 22, "3mo": 64, "6mo": 126}
+    if interval == "1d" and period in daily_tail:
+        frame = frame.tail(daily_tail[period])
     inst = db.query(Instrument).filter(Instrument.symbol == symbol.upper()).first()
     return {
         "symbol": symbol.upper(),
+        "interval": interval,
         "instrument": {
             "name": inst.name if inst else symbol.upper(),
             "exchange": inst.exchange if inst else result.meta.exchange,
@@ -310,6 +319,10 @@ def history(
         "bars": [
             {
                 "date": str(idx.date()),
+                # Epoch seconds. The charting library needs a real timestamp for
+                # intraday bars; a date-only key would collapse a whole session
+                # into a single candle.
+                "time": _epoch_seconds(idx),
                 "open": round(float(row["open"]), 6),
                 "high": round(float(row["high"]), 6),
                 "low": round(float(row["low"]), 6),

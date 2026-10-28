@@ -7,11 +7,37 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .base import HistoryResult, MarketDataProvider, ProviderError, ProviderMeta, QuoteResult
+from .resample import resample_ohlcv
 
 warnings.filterwarnings("ignore", module="yfinance.*")
 warnings.filterwarnings("ignore", message=".*inplace keyword.*")
 
 _PERIOD = {"1y": "1y", "2y": "2y", "3y": "3y", "5y": "5y", "10y": "10y", "max": "max"}
+
+_INTRADAY_INTERVALS = ("1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h")
+# Yahoo has no native 3-minute interval ("interval=3m is not supported"), so it
+# is aggregated from one-minute bars here instead of being sent to the provider.
+_DERIVED_INTERVALS = {"3m": ("1m", 3)}
+SUPPORTED_INTERVALS = ("1m", "3m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d")
+
+_PERIOD_DAYS = {
+    "1d": 1,
+    "5d": 5,
+    "7d": 7,
+    "1mo": 30,
+    "3mo": 92,
+    "6mo": 183,
+    "1y": 365,
+    "2y": 730,
+    "3y": 1095,
+    "5y": 1825,
+    "10y": 3650,
+    "max": 20000,
+}
+
+# Provider lookback limits per intraday interval, measured against yfinance:
+# one-minute history is capped at roughly 8 days, sub-hourly at 60 days.
+_INTERVAL_MAX_DAYS = {"1m": 7, "2m": 60, "5m": 60, "15m": 60, "30m": 60, "60m": 730, "90m": 60, "1h": 730}
 
 
 def _currency_for(symbol: str) -> tuple[str, str]:
@@ -75,17 +101,56 @@ class YahooProvider(MarketDataProvider):
         return yf.Ticker(symbol)
 
     def history(self, symbol: str, period: str = "5y", interval: str = "1d") -> HistoryResult:
+        if interval not in SUPPORTED_INTERVALS:
+            raise ProviderError(
+                f"Interval '{interval}' is not supported. Use one of: {', '.join(SUPPORTED_INTERVALS)}.",
+                retryable=False,
+                symbol=symbol,
+            )
+        source_interval, bucket_minutes = _DERIVED_INTERVALS.get(interval, (interval, None))
+        notes: list[str] = []
+        if bucket_minutes:
+            notes.append(
+                f"{interval} candles are aggregated server-side from {source_interval} bars; "
+                f"the provider has no native {interval} interval."
+            )
+        yf_period = _PERIOD.get(period, "5y")
+        if interval != "1d":
+            cap = _INTERVAL_MAX_DAYS[source_interval]
+            requested_days = _PERIOD_DAYS.get(period, 365)
+            days = min(requested_days, cap)
+            if requested_days > cap:
+                notes.append(
+                    f"{interval} bars are limited to a ~{cap}-day lookback by the provider; "
+                    f"showing the most recent {days} days instead of {period}."
+                )
+            yf_period = f"{days}d"
+
         last_error: Exception | None = None
         for attempt in range(2):
             try:
-                frame = self._ticker(symbol).history(
-                    period=_PERIOD.get(period, "5y"), interval=interval, auto_adjust=False, actions=False
+                raw = self._ticker(symbol).history(
+                    period=yf_period, interval=source_interval, auto_adjust=False, actions=False
                 )
-                normalized = _normalize_history(frame, symbol)
+                if raw is None or raw.empty:
+                    # Yahoo returns an empty frame (not an exception) when an
+                    # intraday range exceeds its retention window.
+                    if interval != "1d":
+                        raise ProviderError(
+                            f"No {interval} bars are available for {symbol}. The provider keeps about "
+                            f"{_INTERVAL_MAX_DAYS[source_interval]} days of {source_interval} history and "
+                            "has no bars for closed sessions.",
+                            retryable=False,
+                            symbol=symbol,
+                        )
+                    raise ProviderError(f"No historical data returned for {symbol}.", retryable=False, symbol=symbol)
+                normalized = _normalize_history(raw, symbol)
                 if interval == "1d":
                     # Daily bars are keyed by calendar date at midnight UTC.
                     normalized.index = normalized.index.normalize()
                     normalized = normalized[~normalized.index.duplicated(keep="last")]
+                elif bucket_minutes:
+                    normalized = resample_ohlcv(normalized, bucket_minutes)
                 curr, exch = _currency_for(symbol)
                 last_ts = normalized.index[-1].to_pydatetime().replace(tzinfo=timezone.utc)
                 meta = ProviderMeta(
@@ -95,7 +160,15 @@ class YahooProvider(MarketDataProvider):
                     currency=curr,
                     exchange=exch,
                     observation_end=last_ts,
-                    warnings=["Yahoo Finance data is not a licensed real-time feed; daily bars are end-of-day."],
+                    warnings=[
+                        "Yahoo Finance data is not a licensed real-time feed; daily bars are end-of-day.",
+                        *(
+                            ["Intraday bars are delayed, and the newest candle may still be forming."]
+                            if interval != "1d"
+                            else []
+                        ),
+                        *notes,
+                    ],
                 )
                 return HistoryResult(frame=normalized, meta=meta)
             except ProviderError:
