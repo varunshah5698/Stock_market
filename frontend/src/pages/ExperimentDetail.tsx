@@ -11,7 +11,7 @@ import {
   Sparkles,
   TriangleAlert,
 } from 'lucide-react'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { FeatureImportance, MarketLineChart, SignedBars } from '../components/charts'
 import { Badge, Button, Callout, DataStatus, ErrorState, LoadingPanel, Metric, PageHeader, SectionTitle, Spinner, StatusPill, WarningList } from '../components/ui'
@@ -21,6 +21,11 @@ import { cn, fmtDateTime, fmtNumber, fmtPct, pctClass } from '../lib/format'
 import { useDocumentTitle } from '../lib/hooks'
 import { useToasts } from '../store/ui'
 import type { ExperimentDetail as ExperimentDetailType, MetricRecord, Prediction } from '../lib/types'
+
+// Three.js stays out of the initial bundle.
+const Funnel3D = lazy(() =>
+  import('../components/Market3D').then((module) => ({ default: module.ForecastCone3D })),
+)
 
 function asPercent(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—'
@@ -359,6 +364,22 @@ export default function ExperimentDetail() {
                           </span>
                         </div>
                         <div className="mt-2 text-[8.5px] leading-relaxed text-dimx">{prediction.scenario.assumption}</div>
+                        <Suspense
+                          fallback={<div className="mt-2 py-10 text-center font-mono text-[9px] text-dimx">Loading 3D funnel…</div>}
+                        >
+                          <div className="mt-2 overflow-hidden rounded-lg border border-white/[0.06]">
+                            <Funnel3D
+                              last={prediction.scenario.last_close}
+                              expected={prediction.scenario.expected_price}
+                              low={prediction.scenario.low_price}
+                              high={prediction.scenario.high_price}
+                              height={200}
+                            />
+                          </div>
+                        </Suspense>
+                        <div className="mt-1 font-mono text-[8px] text-dimx">
+                          Funnel width is the residual interval; the tube is the point estimate. Drag to orbit.
+                        </div>
                       </div>
                     )}
                     <div className="grid grid-cols-2 gap-2 font-mono text-[9px] text-dimx">

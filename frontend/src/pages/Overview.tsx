@@ -14,10 +14,15 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AreaTrend, SimpleBars } from '../components/charts'
 import { DataStatus, EmptyState, ErrorState, LoadingPanel, Metric, PageHeader, SectionTitle, StatusPill, WarningList } from '../components/ui'
+
+// Three.js stays out of the initial bundle.
+const Surface3D = lazy(() =>
+  import('../components/Market3D').then((module) => ({ default: module.ReturnSurface3D })),
+)
 import { api } from '../lib/api'
 import { cn, fmtCompact, fmtDateTime, fmtMoney, fmtNumber, fmtPct, pctClass, relativeTime } from '../lib/format'
 import { useDocumentTitle } from '../lib/hooks'
@@ -193,6 +198,24 @@ export default function Overview() {
                 valueFormatter={(value) => fmtNumber(value, 0)}
               />
             )}
+          </section>
+
+          <section className="panel overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+              <div>
+                <div className="eyebrow mb-0.5">Depth view</div>
+                <div className="text-[13px] text-white">3D session-return surface</div>
+              </div>
+              <span className="font-mono text-[8.5px] text-dimx">drag to orbit</span>
+            </div>
+            <Suspense
+              fallback={<div className="px-4 py-12 text-center font-mono text-[10px] text-dimx">Loading 3D surface…</div>}
+            >
+              <Surface3D bars={chartBars} height={280} />
+            </Suspense>
+            <div className="border-t border-white/[0.05] px-4 py-2 font-mono text-[8.5px] leading-relaxed text-dimx">
+              One bar per session return from the closes above: height is magnitude, colour is sign. Same delayed data as the chart — not a live feed.
+            </div>
           </section>
 
           <section className="panel overflow-hidden">
