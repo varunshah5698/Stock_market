@@ -1,0 +1,15 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+frontend/dist
+backend/storage
+backend/*.db
+backend/migration_tmp.db
+backend/alembic_test.db
+*.pyc
+.env
+.env.*
+!.env.example
+frontend/e2e/screenshots
