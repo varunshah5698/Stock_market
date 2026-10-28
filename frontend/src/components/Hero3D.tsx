@@ -22,6 +22,7 @@ function fibonacciSphere(count: number, radius: number) {
 function Globe({ reduced }: { reduced: boolean }) {
   const group = useRef<THREE.Group>(null)
   const inner = useRef<THREE.Group>(null)
+  const pulseRefs = useRef<(THREE.Mesh | null)[]>([])
   const target = useRef({ x: 0, y: 0 })
 
   const nodes = useMemo(() => fibonacciSphere(150, 2.12), [])
@@ -37,18 +38,57 @@ function Globe({ reduced }: { reduced: boolean }) {
     return geometry
   }, [nodes])
 
-  const arcs = useMemo(() => {
-    const list: THREE.Vector3[][] = []
-    for (let index = 0; index < 11; index += 1) {
-      const start = nodes[(index * 13 + 3) % nodes.length]
-      const end = nodes[(index * 47 + 29) % nodes.length]
-      const mid = start.clone().add(end).multiplyScalar(0.5)
-      const lift = start.distanceTo(end) * 0.42 + 0.32
-      mid.normalize().multiplyScalar(2.12 + lift)
-      const curve = new THREE.QuadraticBezierCurve3(start, mid, end)
-      list.push(curve.getPoints(34))
+  const shellGeometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry()
+    const count = 1100
+    const golden = Math.PI * (3 - Math.sqrt(5))
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+    const top = new THREE.Color("#c4b5fd")
+    const bottom = new THREE.Color("#22d3ee")
+    for (let index = 0; index < count; index += 1) {
+      const y = 1 - (index / (count - 1)) * 2
+      const r = Math.sqrt(Math.max(0, 1 - y * y))
+      const theta = golden * index
+      positions[index * 3] = Math.cos(theta) * r * 1.98
+      positions[index * 3 + 1] = y * 1.98
+      positions[index * 3 + 2] = Math.sin(theta) * r * 1.98
+      // Vertical gradient so the shell reads as a sphere, not a flat disc.
+      const shade = bottom.clone().lerp(top, (y + 1) / 2)
+      colors[index * 3] = shade.r
+      colors[index * 3 + 1] = shade.g
+      colors[index * 3 + 2] = shade.b
     }
-    return list
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3))
+    return geometry
+  }, [])
+
+
+  const { arcs, curves } = useMemo(() => {
+    const pathPoints: THREE.Vector3[][] = []
+    const pathCurves: THREE.QuadraticBezierCurve3[] = []
+    for (let index = 0; index < 7; index += 1) {
+      const start = nodes[(index * 13 + 3) % nodes.length]
+      // Choose an endpoint that is close enough to keep the arc hugging the
+      // sphere. Long hops lifted far off the surface and read as scribbles.
+      let end = nodes[(index * 47 + 29) % nodes.length]
+      for (let step = 1; step < nodes.length; step += 1) {
+        const candidate = nodes[(index * 47 + 29 + step) % nodes.length]
+        const span = start.distanceTo(candidate)
+        if (span > 1.5 && span < 2.4) {
+          end = candidate
+          break
+        }
+      }
+      const mid = start.clone().add(end).multiplyScalar(0.5)
+      const lift = start.distanceTo(end) * 0.22 + 0.12
+      mid.normalize().multiplyScalar(2.02 + lift)
+      const curve = new THREE.QuadraticBezierCurve3(start, mid, end)
+      pathCurves.push(curve)
+      pathPoints.push(curve.getPoints(30))
+    }
+    return { arcs: pathPoints, curves: pathCurves }
   }, [nodes])
 
   useEffect(() => {
@@ -68,27 +108,47 @@ function Globe({ reduced }: { reduced: boolean }) {
       group.current.rotation.x = THREE.MathUtils.lerp(group.current.rotation.x, target.current.x, 0.03)
       group.current.rotation.z = THREE.MathUtils.lerp(group.current.rotation.z, -target.current.y * 0.06, 0.03)
       if (inner.current) inner.current.rotation.y -= delta * 0.09
+      // Travel pulses along the arcs: motion with intent instead of idle drift.
+      pulseRefs.current.forEach((mesh, index) => {
+        if (!mesh) return
+        const curve = curves[index % curves.length]
+        if (!curve) return
+        const t = (state.clock.elapsedTime * 0.16 + index / curves.length) % 1
+        mesh.position.copy(curve.getPoint(t))
+      })
     }
-    const pulse = 1 + Math.sin(state.clock.elapsedTime * 0.8) * 0.008
-    state.scene.scale.setScalar(pulse)
   })
 
   return (
-    <group ref={group} rotation={[0.18, -0.4, 0.08]}>
-      <mesh>
-        <icosahedronGeometry args={[2.1, 3]} />
-        <meshBasicMaterial color="#4c2a8f" wireframe transparent opacity={0.18} />
-      </mesh>
-      <mesh>
-        <sphereGeometry args={[2.08, 64, 64]} />
-        <meshStandardMaterial color="#120c24" metalness={0.62} roughness={0.45} transparent opacity={0.82} emissive="#1a0f35" emissiveIntensity={0.55} />
-      </mesh>
-      <mesh>
-        <sphereGeometry args={[2.02, 48, 48]} />
-        <meshBasicMaterial color="#2a1854" transparent opacity={0.35} />
+    <group ref={group} rotation={[0.12, -0.35, 0.05]} scale={0.92}>
+      {/* Point-matrix shell. A filled sphere read as a flat purple disc on this
+          background; dots give real depth falloff at the rim. */}
+      <points geometry={shellGeometry}>
+        <pointsMaterial
+          vertexColors
+          size={0.022}
+          sizeAttenuation
+          transparent
+          opacity={1}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </points>
+      {/* Single tight rim shell. A second, larger shell drew a visible bubble
+          edge against the page background. */}
+      <mesh scale={1.03}>
+        <sphereGeometry args={[2.0, 40, 40]} />
+        <meshBasicMaterial
+          color={VIOLET}
+          side={THREE.BackSide}
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
       </mesh>
       <points geometry={nodeGeometry}>
-        <pointsMaterial color="#a78bfa" size={0.035} sizeAttenuation transparent opacity={0.9} blending={THREE.AdditiveBlending} />
+        <pointsMaterial color="#c4b5fd" size={0.052} sizeAttenuation transparent opacity={1} blending={THREE.AdditiveBlending} depthWrite={false} />
       </points>
       <group ref={inner}>
         {arcs.map((points, index) => (
@@ -97,14 +157,37 @@ function Globe({ reduced }: { reduced: boolean }) {
             points={points}
             color={index % 3 === 0 ? '#34e0a1' : index % 2 === 0 ? '#22d3ee' : '#a78bfa'}
             transparent
-            opacity={0.26}
-            lineWidth={0.7}
+            opacity={0.8}
+            lineWidth={1.5}
           />
         ))}
-        {[0, 1, 2].map((index) => (
-          <mesh key={`ring-${index}`} rotation={[Math.PI / 2 + index * 0.32, index * 0.6, 0]}>
-            <torusGeometry args={[2.55 + index * 0.22, 0.0035, 8, 200]} />
-            <meshBasicMaterial color={index === 1 ? '#22d3ee' : '#8b5cf6'} transparent opacity={0.34 - index * 0.07} />
+        {curves.slice(0, 4).map((_, index) => (
+          <mesh
+            key={`pulse-${index}`}
+            ref={(node) => {
+              pulseRefs.current[index] = node
+            }}
+          >
+            <sphereGeometry args={[0.045, 12, 12]} />
+            <meshBasicMaterial
+              color={index % 2 === 0 ? '#34e0a1' : '#22d3ee'}
+              transparent
+              opacity={0.95}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+            />
+          </mesh>
+        ))}
+        {[0, 1].map((index) => (
+          <mesh key={`ring-${index}`} rotation={[Math.PI / 2 + 0.42 + index * 0.26, 0, index * 0.8]}>
+            <torusGeometry args={[2.14 + index * 0.16, 0.0038, 8, 220]} />
+            <meshBasicMaterial
+              color={index === 0 ? '#22d3ee' : '#8b5cf6'}
+              transparent
+              opacity={0.38}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+            />
           </mesh>
         ))}
         {[0, 1, 2, 3, 4].map((index) => {
@@ -118,14 +201,6 @@ function Globe({ reduced }: { reduced: boolean }) {
           )
         })}
       </group>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[2.9, 0.0018, 6, 220]} />
-        <meshBasicMaterial color="#a78bfa" transparent opacity={0.3} />
-      </mesh>
-      <ambientLight intensity={0.5} />
-      <pointLight position={[4, 4, 5]} intensity={22} color={VIOLET} distance={16} />
-      <pointLight position={[-5, -2, 3]} intensity={16} color={CYAN} distance={14} />
-      <pointLight position={[0, 3, -4]} intensity={9} color={MINT} distance={12} />
     </group>
   )
 }
@@ -207,7 +282,7 @@ export default function Hero3D() {
     <div className="relative h-full w-full" aria-label="Animated 3D market intelligence sphere">
       <Canvas
         dpr={[1, 1.6]}
-        camera={{ position: [0, 0.2, 6.6], fov: 45 }}
+        camera={{ position: [0, 0.1, 7.4], fov: 42 }}
         gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
         style={{ background: 'transparent' }}
         frameloop={reduced ? 'demand' : 'always'}
