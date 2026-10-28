@@ -206,6 +206,11 @@ multi-service routing locally with `npx vercel dev -L`; it was run for this chan
 routed `/api/*`, `/health` and `/ready` to the backend, served client-side deep links from the SPA, and completed a
 register → session cookie → `/auth/me` round-trip on the single public port.
 
+`DATABASE_URL` may be a provider's standard `postgresql://` URL (Neon, Supabase, Render hand these out); the app
+rewrites it to the installed `psycopg` 3 driver, so no `+psycopg` suffix and no second Postgres driver is needed.
+A Neon resource can be provisioned from the Vercel Marketplace (`vercel integration add neon`), which injects
+`DATABASE_URL` into every environment.
+
 ### Without Docker
 
 1. Build the SPA: `cd frontend && npm ci && npm run build`.

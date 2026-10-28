@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from .config import settings
+from .config import database_url, settings
 
 
 class Base(DeclarativeBase):
@@ -24,7 +24,7 @@ if settings.database_url.startswith("sqlite"):
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 engine = create_engine(
-    settings.database_url,
+    database_url(),
     connect_args=connect_args,
     pool_pre_ping=True,
     future=True,

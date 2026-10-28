@@ -20,3 +20,5 @@ frontend/e2e/screenshots/
 
 .DS_Store
 *.log
+.vercel
+.env*

@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 
 from app import models  # noqa: F401  (register all tables)
-from app.config import settings
+from app.config import database_url
 from app.db import Base
 
 config = context.config
@@ -14,7 +14,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # The application uses pydantic-settings; keep one source of truth for the URL.
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+config.set_main_option("sqlalchemy.url", database_url().replace("%", "%%"))
 
 target_metadata = Base.metadata
 

@@ -72,6 +72,21 @@ if settings.secret_key == "change-me-development-only":
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 
+def database_url() -> str:
+    """DATABASE_URL with the driver the project actually installs.
+
+    Providers (Neon, Supabase, Render) hand out ``postgresql://`` URLs, which
+    SQLAlchemy resolves to psycopg2. This project ships psycopg 3, so the driver
+    is made explicit instead of adding a second Postgres driver.
+    """
+    url = settings.database_url
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
+    return url
+
+
 def _writable(directory: Path) -> bool:
     try:
         directory.mkdir(parents=True, exist_ok=True)
