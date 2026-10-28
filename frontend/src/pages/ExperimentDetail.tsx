@@ -382,6 +382,42 @@ export default function ExperimentDetail() {
                         </div>
                       </div>
                     )}
+                    {prediction.news_context && (
+                      <div className="rounded-lg border border-white/[0.06] bg-black/20 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="eyebrow">Live news at forecast time</span>
+                          <Badge tone={prediction.news_context.available ? 'neutral' : 'warn'}>
+                            {prediction.news_context.available ? prediction.news_context.provider : 'unavailable'}
+                          </Badge>
+                        </div>
+                        {prediction.news_context.available ? (
+                          <>
+                            <div className="font-mono text-[9px] text-dimx">
+                              {prediction.news_context.article_count} headlines · tone{' '}
+                              {prediction.news_context.tone?.label ?? 'mixed'} ({prediction.news_context.tone?.score?.toFixed(2) ?? '—'})
+                            </div>
+                            <ul className="mt-2 space-y-1.5">
+                              {(prediction.news_context.headlines ?? []).map((item) => (
+                                <li key={item.url}>
+                                  <a
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                    className="text-[10.5px] leading-snug text-mutedx hover:text-white"
+                                  >
+                                    {item.title}
+                                  </a>
+                                  <span className="ml-1 font-mono text-[8px] text-dimx">{item.source}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        ) : (
+                          <div className="text-[10px] text-dimx">{prediction.news_context.error ?? prediction.news_context.note}</div>
+                        )}
+                        <div className="mt-2 text-[8px] leading-relaxed text-dimx">{prediction.news_context.note}</div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-2 font-mono text-[9px] text-dimx">
                       <span>as of {prediction.as_of}</span>
                       <span className="text-right">{prediction.data.data_status}</span>

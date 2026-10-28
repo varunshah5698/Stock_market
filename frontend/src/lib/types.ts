@@ -319,6 +319,19 @@ export interface Prediction {
     high_price: number | null
     assumption: string
   } | null
+  /** Live headlines stored with the forecast. Never a model input. */
+  news_context?: {
+    available: boolean
+    provider?: string
+    fetched_at?: string
+    article_count?: number
+    newest_published_at?: string | null
+    tone?: { score: number; label: string; positive_hits: number; negative_hits: number; sample: number; method: string }
+    headlines?: { title: string; url: string; source: string; published_at: string | null }[]
+    used_as_model_input?: boolean
+    note?: string
+    error?: string
+  } | null
   test_metrics: MetricRecord
   val_metrics: MetricRecord
   warnings: string[]

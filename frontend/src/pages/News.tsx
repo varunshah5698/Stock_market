@@ -1,95 +1,162 @@
 import { useQuery } from '@tanstack/react-query'
-import { BellOff, BookOpen, Globe2, KeyRound, Newspaper, ShieldAlert } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { Badge, Callout, ErrorState, LoadingPanel, PageHeader, SectionTitle } from '../components/ui'
+import { ExternalLink, Newspaper, RefreshCw, Rss, ShieldAlert } from 'lucide-react'
+import { useState } from 'react'
+import { Badge, Button, Callout, EmptyState, ErrorState, Input, LoadingPanel, PageHeader, SectionTitle, WarningList } from '../components/ui'
 import { api } from '../lib/api'
+import { cn, fmtDateTime, relativeTime } from '../lib/format'
 import { useDocumentTitle } from '../lib/hooks'
 
-interface Integrations {
-  news: { configured: boolean; status: string; requires: string; env: string[] }
-  streaming: { configured: boolean; status: string; requires: string }
-  broker: { configured: boolean; status: string; requires: string; env: string[] }
-  email: { configured: boolean; status: string; requires: string }
+interface NewsArticle {
+  title: string
+  url: string
+  source: string
+  published_at: string | null
+}
+
+interface NewsPayload {
+  query: string
+  provider: string
+  provider_mode: string
+  fetched_at: string
+  from_cache: boolean
+  cache_ttl_minutes: number
+  count: number
+  newest_published_at: string | null
+  tone: { score: number; label: string; positive_hits: number; negative_hits: number; sample: number; method: string }
+  articles: NewsArticle[]
+  warnings: string[]
+  disclaimer: string
 }
 
 export default function News() {
   useDocumentTitle('News & events')
-  const integrations = useQuery<Integrations>({
-    queryKey: ['integrations'],
-    queryFn: () => api('/api/v1/settings/integrations'),
+  const [symbol, setSymbol] = useState('')
+  const [applied, setApplied] = useState('')
+
+  const news = useQuery<NewsPayload>({
+    queryKey: ['news', applied],
+    queryFn: () => api(`/api/v1/news?symbol=${encodeURIComponent(applied)}&limit=25`),
+    staleTime: 60_000,
+    retry: 0,
   })
+
+  const data = news.data
+  const tone = data?.tone
+  const toneTone = tone?.label === 'positive' ? 'gain' : tone?.label === 'negative' ? 'loss' : 'neutral'
 
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow="Market news & event intelligence"
         title="News & events"
-        description="A legitimate news feed requires an authorized provider, licensing and an implemented adapter. None is configured in this deployment, so no headlines are shown."
-        actions={<Badge tone="warn">setup required</Badge>}
+        description="Live headlines from a keyless public RSS aggregator. Nothing here is seeded or generated: if the feed is unreachable you get an explicit error, not placeholder stories."
+        actions={
+          data ? (
+            <Badge tone={data.from_cache ? 'neutral' : 'gain'}>{data.from_cache ? 'cached' : 'live fetch'}</Badge>
+          ) : (
+            <Badge tone="neutral">keyless provider</Badge>
+          )
+        }
       />
 
-      {integrations.isLoading ? (
-        <LoadingPanel rows={5} />
-      ) : integrations.isError ? (
-        <ErrorState message={integrations.error instanceof Error ? integrations.error.message : 'Integration state unavailable'} onRetry={() => void integrations.refetch()} />
+      <section className="panel p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[220px] flex-1">
+            <label className="eyebrow mb-1.5 block" htmlFor="news-symbol">
+              Filter by instrument
+            </label>
+            <Input
+              id="news-symbol"
+              value={symbol}
+              placeholder="AAPL — leave blank for the general market"
+              onChange={(event) => setSymbol(event.target.value.toUpperCase())}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') setApplied(symbol.trim())
+              }}
+            />
+          </div>
+          <Button size="sm" onClick={() => setApplied(symbol.trim())}>
+            Search
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setApplied('')}>
+            Market feed
+          </Button>
+          <Button size="sm" variant="outline" icon={<RefreshCw className={cn('h-3.5 w-3.5', news.isFetching && 'animate-spin')} />} onClick={() => void news.refetch()}>
+            Refresh
+          </Button>
+        </div>
+        {data && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[8.5px] text-dimx">
+            <span className="flex items-center gap-1"><Rss className="h-3 w-3" /> {data.provider}</span>
+            <span>query “{data.query}”</span>
+            <span>{data.count} headlines</span>
+            <span>fetched {fmtDateTime(data.fetched_at)}</span>
+            <span>cache {data.cache_ttl_minutes}m</span>
+            {data.newest_published_at && <span>newest {relativeTime(data.newest_published_at)}</span>}
+          </div>
+        )}
+      </section>
+
+      {news.isLoading ? (
+        <LoadingPanel rows={6} />
+      ) : news.isError ? (
+        <ErrorState
+          title="News provider unavailable"
+          message={news.error instanceof Error ? news.error.message : 'The feed could not be reached.'}
+          onRetry={() => void news.refetch()}
+        />
+      ) : !data || data.count === 0 ? (
+        <EmptyState
+          title="No headlines right now"
+          description={`The provider returned no articles for this query. This is an empty result, not a placeholder.`}
+        />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-          <section className="panel p-5">
-            <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] text-violet-400">
-              <Newspaper className="h-5 w-5" />
+        <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+          <section className="panel overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+              <div className="flex items-center gap-2 text-[12px] text-white">
+                <Newspaper className="h-3.5 w-3.5 text-violet-400" /> Headlines
+                <span className="font-mono text-[9px] text-dimx">{data.count}</span>
+              </div>
+              <span className="font-mono text-[8.5px] text-dimx">{data.from_cache ? 'served from cache' : 'fetched just now'}</span>
             </div>
-            <h2 className="display text-[17px] text-white">No news adapter is active</h2>
-            <p className="mt-2 text-[12px] leading-relaxed text-mutedx">
-              The platform will not scrape restricted content, invent headlines, or present an AI summary as published information.
-              The workspace stays in an explicit setup state until a provider is authorized and an adapter is implemented.
-            </p>
-            <div className="mt-4 space-y-2">
-              {[
-                ['Provider authorization', 'Select an official news or financial-events API and verify its redistribution terms.'],
-                ['Entitlement checks', 'Respect article limits, licensing and attribution requirements.'],
-                ['Adapter + normalization', 'Map timestamps, symbols, sources, links and duplicate stories into a typed contract.'],
-                ['Sentiment, if added', 'Label it as a model output with documented limitations — never as a price prediction.'],
-              ].map(([title, copy], index) => (
-                <div key={title} className="flex gap-3 border-b border-white/[0.05] pb-2 last:border-0 last:pb-0">
-                  <span className="font-mono text-[9px] text-violet-400/70">0{index + 1}</span>
-                  <div>
-                    <div className="text-[11px] text-white">{title}</div>
-                    <div className="mt-0.5 text-[10px] leading-relaxed text-dimx">{copy}</div>
-                  </div>
-                </div>
+            <ul className="divide-y divide-white/[0.05]">
+              {data.articles.map((article) => (
+                <li key={article.url} className="px-4 py-3">
+                  <a href={article.url} target="_blank" rel="noreferrer noopener" className="group flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] leading-snug text-white group-hover:text-violet-300">{article.title}</div>
+                      <div className="mt-1 flex items-center gap-2 font-mono text-[8.5px] text-dimx">
+                        <span>{article.source || 'unknown source'}</span>
+                        {article.published_at && <span>· {relativeTime(article.published_at)}</span>}
+                      </div>
+                    </div>
+                    <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 text-dimx group-hover:text-white" />
+                  </a>
+                </li>
               ))}
-            </div>
-            <Link to="/app/settings" className="btn btn-outline btn-sm mt-4">Integration settings</Link>
+            </ul>
           </section>
 
           <div className="space-y-4">
-            <section className="panel p-5">
-              <SectionTitle eyebrow="Configuration" title="What is required" />
-              <div className="rounded-lg border border-white/[0.07] bg-black/20 p-3">
-                <div className="eyebrow mb-1.5">Required environment</div>
-                <code className="block font-mono text-[10px] text-cyanx/80">{integrations.data?.news.env.join(' · ') || 'NEWS_API_KEY'}</code>
+            <section className="panel p-4">
+              <SectionTitle
+                eyebrow="Headline tone"
+                title={tone?.label ?? 'mixed'}
+                action={<Badge tone={toneTone as 'gain' | 'loss' | 'neutral'}>{tone ? tone.score.toFixed(2) : '—'}</Badge>}
+              />
+              <div className="font-mono text-[9px] text-dimx">
+                {tone ? `${tone.positive_hits} positive · ${tone.negative_hits} negative hits across ${tone.sample} headlines` : 'no sample'}
               </div>
-              <p className="mt-3 text-[10.5px] leading-relaxed text-dimx">{integrations.data?.news.requires}</p>
-              <div className="mt-3 flex items-center gap-2 text-[10px] text-dimx">
-                <KeyRound className="h-3 w-3" /> Check the provider's official documentation before enabling redistribution.
-              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-dimx">{tone?.method}</p>
+              <p className="mt-2 flex gap-2 text-[10px] leading-relaxed text-warn/80">
+                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                A keyword score over headlines is a crude signal, not sentiment analysis, and it is not a model input.
+              </p>
             </section>
 
-            <section className="panel p-5">
-              <SectionTitle eyebrow="Boundaries" title="What will still be true after setup" />
-              <div className="space-y-2.5 text-[10.5px] leading-relaxed text-dimx">
-                <p className="flex gap-2"><BellOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn/70" /> Instruments are not assigned BUY or SELL labels from headlines.</p>
-                <p className="flex gap-2"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn/70" /> Sentiment is not proof of direction and will not be presented as calibrated probability.</p>
-                <p className="flex gap-2"><BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyanx/70" /> Published information and AI interpretation will be visually separated.</p>
-                <p className="flex gap-2"><Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-400/70" /> Source attribution and direct links are retained where licensing permits.</p>
-              </div>
-            </section>
-
-            <Callout tone="warn" title="Other unconfigured integrations">
-              Streaming market data is <strong>{integrations.data?.streaming.configured ? 'configured' : 'not configured'}</strong>; live brokerage is{' '}
-              <strong>{integrations.data?.broker.configured ? 'configured' : 'disabled'}</strong>; email delivery is{' '}
-              <strong>{integrations.data?.email.configured ? 'configured' : 'not implemented'}</strong>. The app performs research and paper trading without them.
-            </Callout>
+            <WarningList warnings={data.warnings} title="Provider limits" />
+            <Callout tone="warn" title="How this reaches the forecast">{data.disclaimer}</Callout>
           </div>
         </div>
       )}

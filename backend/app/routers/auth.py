@@ -112,7 +112,7 @@ def me(user: User = Depends(current_user), db: DbSession = Depends(get_db)):
         "capabilities": {
             "email_delivery": False,
             "mfa": False,
-            "news_provider": bool(settings.news_api_key),
+            "news_provider": True,  # keyless public RSS adapter (app/news.py)
             "broker": bool(settings.broker_adapter),
             "market_data": settings.market_data_provider,
         },

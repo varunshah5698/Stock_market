@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session as DbSession
 
@@ -219,10 +219,14 @@ def integrations(user: User = Depends(current_user)):
             "requires": "No API key for yfinance; usage is subject to Yahoo terms and rate limits.",
         },
         "news": {
-            "configured": False,
-            "status": "setup_required",
-            "requires": "An authorized news provider API key plus a provider adapter. No headlines are fabricated while disabled.",
-            "env": ["NEWS_API_KEY"],
+            "configured": True,
+            "status": "live_keyless_rss",
+            "provider": "google_news_rss",
+            "requires": (
+                "No key required: keyless public RSS aggregator, headlines only. Set NEWS_API_KEY only if you "
+                "switch to a licensed provider with redistribution rights."
+            ),
+            "env": ["NEWS_API_KEY (optional)"],
         },
         "broker": {
             "configured": False,
@@ -424,16 +428,32 @@ def live_order(connection_id: str, payload: dict, user: User = Depends(current_u
 
 
 @router.get("/news")
-def news(user: User = Depends(current_user)):
-    return {
-        "configured": False,
-        "articles": [],
-        "setup": {
-            "required": "Authorized news provider API key and an implemented provider adapter.",
-            "note": "No headlines, summaries or sentiment are fabricated while the provider is unconfigured.",
-        },
-        "disclaimer": "News and sentiment are informational only and are not evidence that a price will rise or fall.",
-    }
+def news(
+    symbol: str = Query("", max_length=32),
+    limit: int = Query(20, ge=1, le=50),
+    user: User = Depends(current_user),
+):
+    """Live headlines from a keyless public RSS aggregator.
+
+    ``symbol`` narrows the query (e.g. AAPL -> "AAPL stock"); omitted means a
+    general market query. Nothing is cached to the database, and a provider
+    failure surfaces as an explicit error rather than empty placeholder content.
+    """
+    from ..news import news_payload, query_for_symbol
+
+    query = query_for_symbol(symbol)
+    try:
+        payload = news_payload(query, limit=limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"News provider unavailable: {type(exc).__name__}. No headlines are fabricated while it is down.",
+        )
+    payload["disclaimer"] = (
+        "News and the keyword tone are informational only and are not evidence that a price will rise or fall. "
+        "They are not used as a model input."
+    )
+    return payload
 
 
 @router.get("/model-health")

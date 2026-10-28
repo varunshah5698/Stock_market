@@ -406,6 +406,20 @@ def launch_experiment(experiment_id: str) -> None:
     thread.start()
 
 
+def _news_context(symbol: str) -> dict | None:
+    """Live news snapshot stored with a prediction.
+
+    Best-effort by design: a news outage must never fail a forecast, and the
+    payload states explicitly that the headlines did not feed the model.
+    """
+    try:
+        from ..news import prediction_context
+
+        return prediction_context(symbol, limit=5)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"available": False, "error": f"{type(exc).__name__}: {str(exc)[:120]}"}
+
+
 def make_prediction(db: DbSession, exp: Experiment, symbol: str | None = None) -> dict:
     if exp.status != "succeeded":
         raise ValueError("Experiment has not completed successfully")
@@ -507,6 +521,7 @@ def make_prediction(db: DbSession, exp: Experiment, symbol: str | None = None) -
         "test_metrics": version.test_metrics,
         "val_metrics": version.val_metrics,
         "warnings": warnings,
+        "news_context": _news_context(symbol),
         "data": {
             "provider": history.meta.provider,
             "data_status": history.meta.data_status,
