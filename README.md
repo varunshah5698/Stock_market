@@ -197,12 +197,14 @@ in-process scheduler cannot be used. Set these project environment variables bef
 | `COOKIE_SECURE` | `true` | enforced when `APP_ENV=production` |
 | `AUTO_CREATE_SCHEMA` | `false` | run `alembic upgrade head` against the database once instead |
 | `BACKGROUND_JOBS` | `false` | the alert/limit-order scheduler needs a long-running process; use Cron Jobs |
-| `APP_URL`, `ALLOWED_ORIGINS` | the deployment origin | CORS and CSP |
+| `APP_URL`, `ALLOWED_ORIGINS` | the deployment origin, e.g. `https://<project>.vercel.app` | the CSRF origin check returns 403 on every mutation when the request origin matches neither, and CSP/CORS read the same list |
 
 Uploaded datasets and trained model artifacts are written under `STORAGE_DIR`, which defaults to `/tmp` when the
 bundle is read-only. That is per-instance and ephemeral: uploads and artifacts disappear on cold start or
-redeploy. Point `STORAGE_DIR` at a mounted volume, or move artifacts to object storage, before relying on them.
-Validate the multi-service routing locally with `npx vercel dev -L`.
+redeploy. Point `STORAGE_DIR` at a mounted volume, or move artifacts to object storage, before relying on them. Validate the
+multi-service routing locally with `npx vercel dev -L`; it was run for this change and detected both services,
+routed `/api/*`, `/health` and `/ready` to the backend, served client-side deep links from the SPA, and completed a
+register → session cookie → `/auth/me` round-trip on the single public port.
 
 ### Without Docker
 
